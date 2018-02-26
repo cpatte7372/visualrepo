@@ -1,0 +1,468 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "resourcePrefix": {
+      "type": "string",
+      "minLength": 1,
+      "metadata": {
+        "description": "General: A string to prefix all resources with."
+      }
+    },
+    "adminUserName": {
+      "type": "string",
+      "minLength": 5,
+      "maxLength": 20,
+      "defaultValue": "azureadmin",
+      "metadata": {
+        "description": "VM: Admin UserName"
+      }
+    },
+    "adminPassword": {
+      "type": "securestring",
+      "metadata": {
+        "description": "VM: Admin password"
+      }
+    },
+    "vmSize": {
+      "type": "string",
+      "minLength": 1,
+      "defaultValue": "Standard_D1_v2",
+      "allowedValues": [
+        "Basic_A0",
+        "Basic_A1",
+        "Basic_A2",
+        "Basic_A3",
+        "Basic_A4",
+        "Standard_A0",
+        "Standard_A1",
+        "Standard_A2",
+        "Standard_A3",
+        "Standard_A4",
+        "Standard_D1",
+        "Standard_D2",
+        "Standard_D3",
+        "Standard_D4",
+        "Standard_B1s",
+        "Standard_B1ms",
+        "Standard_B2s",
+        "Standard_B2ms",
+        "Standard_B4ms",
+        "Standard_B8ms",
+        "Standard_D1_v2",
+        "Standard_D2_v2",
+        "Standard_D3_v2",
+        "Standard_D4_v2"
+      ],
+      "metadata": {
+        "description": "VM: Size"
+      }
+    },
+    "publicIPAddressType": {
+      "type": "string",
+      "defaultValue": "Static",
+      "allowedValues": [
+        "Dynamic",
+        "Static"
+      ],
+      "metadata": {
+        "description": "Network: Public IP type"
+      }
+    },
+    "diskType": {
+      "type": "string",
+      "defaultValue": "managed",
+      "allowedValues": [
+        "managed",
+        "unmanaged"
+      ],
+      "metadata": {
+        "description": "VM: Are the disk managed"
+      }
+    },
+    "numDataDisks": {
+      "type": "string",
+      "defaultValue": "1",
+      "allowedValues": [
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6",
+        "7",
+        "8",
+        "9",
+        "10",
+        "11",
+        "12",
+        "13",
+        "14",
+        "15",
+        "16"
+      ],
+      "metadata": {
+        "description": "VM: Number of Data Disks"
+      }
+    }
+  },
+  "variables": {
+    "resourcePrefix": "[parameters('resourcePrefix')]",
+    "availabilitySetName": "[concat(variables('resourcePrefix'), '-avs')]",
+    "networkInterfaceName": "[concat(variables('resourcePrefix'), '-nic')]",
+    "artifacts": {
+      "location": "https://raw.githubusercontent.com/bentaylorwork/azure-arm-templates/master/disk-management-selection",
+      "sas": ""
+    },
+    "vm": {
+      "name": "[concat(variables('resourcePrefix'), '-vm')]",
+      "os": "2016-Datacenter",
+      "imageOffer": "WindowsServer",
+      "imagePublisher": "MicrosoftWindowsServer",
+      "adminUserName": "[parameters('adminUserName')]",
+      "storageUnmanaged": {
+        "vhd": {
+          "uri": "[concat('http://', variables('storage').accountName, '.blob.core.windows.net/vhds/', 'osdisk', '.vhd')]"
+        },
+        "copy": [
+          {
+            "name": "dataDisks",
+            "count": "[int(parameters('numDataDisks'))]",
+            "input": {
+              "name": "[concat('datadisk', copyIndex('dataDisks'))]",
+              "lun": "[copyIndex('dataDisks')]",
+              "createOption": "Empty",
+              "diskSizeGB": "1023",
+              "createOption": "Empty",
+              "vhd": {
+                "uri": "[concat('http://vhdstorage', uniqueString(resourceGroup().id), '.blob.core.windows.net/vhds/', 'datadisk', copyIndex('dataDisks'), '.vhd')]"
+              }
+            }
+          }
+        ]
+      },
+      "storageManaged": {
+        "copy": [
+          {
+            "name": "dataDisks",
+            "count": "[int(parameters('numDataDisks'))]",
+            "input": {
+              "name": "[concat('datadisk', copyIndex('dataDisks'))]",
+              "lun": "[copyIndex('dataDisks')]",
+              "createOption": "Empty",
+              "diskSizeGB": "1023",
+              "createOption": "Empty"
+            }
+          }
+        ]
+      }
+    },
+    "storage": {
+      "accountName": "[concat('vhdstorage', uniqueString(resourceGroup().id))]",
+      "accountType": "Standard_LRS"
+    },
+    "loadBalancer": {
+      "name": "[concat(variables('resourcePrefix'), '-lb')]"
+    },
+    "virtualNetwork": {
+      "name": "[concat(variables('resourcePrefix'), '-vnet')]",
+      "subnetName": "[concat(variables('resourcePrefix'), '-subnet')]"
+    },
+    "security": {
+      "networkSecurityGroupName": "[concat(variables('resourcePrefix'), '-nsg')]"
+    },
+    "publicIP": {
+      "addressName": "[concat(variables('resourcePrefix'), '-pip')]",
+      "addressType": "[parameters('publicIPAddressType')]"
+    }
+  },
+  "resources": [
+    {
+      "apiVersion": "2017-03-01",
+      "type": "Microsoft.Network/publicIPAddresses",
+      "name": "[variables('publicIP').addressName]",
+      "location": "[resourceGroup().location]",
+      "tags": {
+        "displayName": "PublicIP"
+      },
+      "properties": {
+        "publicIPAllocationMethod": "[variables('publicIP').addressType]"
+      }
+    },
+    {
+      "condition": "[equals(parameters('diskType'), 'unmanaged')]",
+      "apiVersion": "2017-06-01",
+      "type": "Microsoft.Storage/storageAccounts",
+      "name": "[variables('storage').accountName]",
+      "location": "[resourceGroup().location]",
+      "tags": {
+        "displayName": "StorageAccount"
+      },
+      "properties": {},
+      "sku": {
+        "name": "[variables('storage').accountType]"
+      },
+      "kind": "Storage"
+    },
+    {
+      "apiVersion": "2017-03-30",
+      "type": "Microsoft.Compute/availabilitySets",
+      "name": "[concat(variables('availabilitySetName'))]",
+      "location": "[resourceGroup().location]",
+      "tags": {
+        "displayName": "AvailabilitySet"
+      },
+      "properties": {
+        "PlatformUpdateDomainCount": 3,
+        "PlatformFaultDomainCount": 2
+      },
+      "sku": {
+        "name": "[if(equals(parameters('diskType'), 'managed'), 'Aligned', 'Classic')]"
+      }
+    },
+    {
+      "apiVersion": "2017-03-01",
+      "type": "Microsoft.Network/virtualNetworks",
+      "name": "[variables('virtualNetwork').name]",
+      "location": "[resourceGroup().location]",
+      "tags": {
+        "displayName": "VirtualNetwork"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/networkSecurityGroups', variables('security').networkSecurityGroupName)]"
+      ],
+      "properties": {
+        "addressSpace": {
+          "addressPrefixes": [
+            "10.0.0.0/16"
+          ]
+        },
+        "subnets": [
+          {
+            "name": "[variables('virtualNetwork').subnetName]",
+            "properties": {
+              "addressPrefix": "10.0.2.0/24",
+              "networkSecurityGroup": {
+                "id": "[resourceId('Microsoft.Network/networkSecurityGroups', variables('security').networkSecurityGroupName)]"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "apiVersion": "2015-06-15",
+      "type": "Microsoft.Network/networkSecurityGroups",
+      "name": "[variables('security').networkSecurityGroupName]",
+      "location": "[resourceGroup().location]",
+      "tags": {
+        "displayName": "NetworkSecurityGroup"
+      },
+      "properties": {
+        "securityRules": [
+          {
+            "name": "Allow-RDP",
+            "properties": {
+              "description": "Allow - RDP - From any source",
+              "protocol": "Tcp",
+              "sourcePortRange": "*",
+              "destinationPortRange": "3389",
+              "sourceAddressPrefix": "Internet",
+              "destinationAddressPrefix": "*",
+              "access": "Allow",
+              "priority": 500,
+              "direction": "Inbound"
+            }
+          },
+          {
+            "name": "Allow-HTTPS",
+            "properties": {
+              "description": "Allow - HTTPS - From any source",
+              "protocol": "Tcp",
+              "sourcePortRange": "*",
+              "destinationPortRange": "443",
+              "sourceAddressPrefix": "Internet",
+              "destinationAddressPrefix": "*",
+              "access": "Allow",
+              "priority": 1000,
+              "direction": "Inbound"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "apiVersion": "2017-03-01",
+      "type": "Microsoft.Network/networkInterfaces",
+      "name": "[variables('networkInterfaceName')]",
+      "location": "[resourceGroup().location]",
+      "tags": {
+        "displayName": "NetworkInterface"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/virtualNetworks', variables('virtualNetwork').name)]",
+        "[resourceId('Microsoft.Network/loadBalancers', variables('loadBalancer').name)]"
+      ],
+      "properties": {
+        "ipConfigurations": [
+          {
+            "name": "ipconfig1",
+            "properties": {
+              "privateIPAllocationMethod": "Dynamic",
+              "subnet": {
+                "id": "[concat(resourceId('Microsoft.Network/virtualNetworks', variables('virtualNetwork').name), '/subnets/', variables('virtualNetwork').subnetName)]"
+              },
+              "loadBalancerBackendAddressPools": [
+                {
+                  "id": "[concat(resourceId('Microsoft.Network/loadBalancers', variables('loadBalancer').name), '/backendAddressPools/BackendPool1')]"
+                }
+              ],
+              "loadBalancerInboundNatRules": [
+                {
+                  "id": "[concat(resourceId('Microsoft.Network/loadBalancers', variables('loadBalancer').name), '/inboundNatRules/Inbound-RDP')]"
+                },
+                {
+                  "id": "[concat(resourceId('Microsoft.Network/loadBalancers', variables('loadBalancer').name), '/inboundNatRules/Inbound-HTTPS')]"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "apiVersion": "2015-06-15",
+      "type": "Microsoft.Network/loadBalancers",
+      "name": "[variables('loadBalancer').name]",
+      "location": "[resourceGroup().location]",
+      "tags": {
+        "displayName": "LoadBalancer"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/publicIPAddresses', variables('publicIP').addressName)]",
+        "[resourceId('Microsoft.Network/virtualNetworks', variables('virtualNetwork').name)]"
+      ],
+      "properties": {
+        "frontendIPConfigurations": [
+          {
+            "properties": {
+              "publicIPAddress": {
+                "id": "[resourceId('Microsoft.Network/publicIPAddresses', variables('publicIP').addressName)]"
+              }
+            },
+            "name": "LoadBalancerFrontend"
+          }
+        ],
+        "backendAddressPools": [
+          {
+            "name": "BackendPool1"
+          }
+        ],
+        "inboundNatRules": [
+          {
+            "name": "Inbound-RDP",
+            "properties": {
+              "backendPort": 3389,
+              "enableFloatingIP": false,
+              "frontendIPConfiguration": {
+                "id": "[concat(resourceId('Microsoft.Network/loadBalancers', variables('loadBalancer').name), '/frontendIPConfigurations/LoadBalancerFrontend')]"
+              },
+              "frontendPort": 3389,
+              "protocol": "tcp"
+            }
+          },
+          {
+            "name": "Inbound-HTTPS",
+            "properties": {
+              "backendPort": 443,
+              "enableFloatingIP": false,
+              "frontendIPConfiguration": {
+                "id": "[concat(resourceId('Microsoft.Network/loadBalancers', variables('loadBalancer').name), '/frontendIPConfigurations/LoadBalancerFrontend')]"
+              },
+              "frontendPort": 443,
+              "protocol": "tcp"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "apiVersion": "2017-03-30",
+      "type": "Microsoft.Compute/virtualMachines",
+      "name": "[concat(variables('vm').name)]",
+      "location": "[resourceGroup().location]",
+      "tags": {
+        "displayName": "VirtualMachines"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Storage/storageAccounts', variables('storage').accountName)]",
+        "[resourceId('Microsoft.Network/networkInterfaces', variables('networkInterfaceName'))]",
+        "[resourceId('Microsoft.Compute/availabilitySets', variables('availabilitySetName'))]"
+      ],
+      "properties": {
+        "availabilitySet": {
+          "id": "[resourceId('Microsoft.Compute/availabilitySets', variables('availabilitySetName'))]"
+        },
+        "hardwareProfile": {
+          "vmSize": "[parameters('vmSize')]"
+        },
+        "osProfile": {
+          "computerName": "[variables('vm').name]",
+          "adminUsername": "[variables('vm').adminUserName]",
+          "adminPassword": "[parameters('adminPassword')]"
+        },
+        "storageProfile": {
+          "imageReference": {
+            "publisher": "[variables('vm').imagePublisher]",
+            "offer": "[variables('vm').imageOffer]",
+            "sku": "[variables('vm').os]",
+            "version": "latest"
+          },
+          "osDisk": {
+            "name": "osdisk",
+            "vhd": "[if(equals(parameters('diskType'), 'unmanaged'), variables('vm').storageUnmanaged.vhd, json('null'))]",
+            "caching": "ReadWrite",
+            "createOption": "FromImage"
+          },
+          "dataDisks": "[if(equals(parameters('diskType'), 'unmanaged'), variables('vm').storageUnmanaged.dataDisks, variables('vm').storageManaged.dataDisks)]"
+        },
+        "networkProfile": {
+          "networkInterfaces": [
+            {
+              "id": "[resourceId('Microsoft.Network/networkInterfaces', variables('networkInterfaceName'))]"
+            }
+          ]
+        }
+      },
+      "resources": [
+        {
+          "type": "extensions",
+          "name": "CreateStorageSpace",
+          "apiVersion": "2015-06-15",
+          "location": "[resourceGroup().location]",
+          "dependsOn": [
+            "[resourceId('Microsoft.Compute/virtualMachines', variables('vm').name)]"
+          ],
+          "properties": {
+            "publisher": "Microsoft.Powershell",
+            "type": "DSC",
+            "typeHandlerVersion": "2.19",
+            "autoUpgradeMinorVersion": true,
+            "settings": {
+              "ModulesUrl": "[concat(variables('artifacts').location, '/DSC/createStorageSpace.zip', variables('artifacts').sas)]",
+              "ConfigurationFunction": "CreateStorageSpace.ps1\\CreateStorageSpace",
+              "Properties": {}
+            },
+            "protectedSettings": {}
+          }
+        }
+      ]
+    }
+  ],
+  "outputs": {
+    "ipAddress": {
+      "value": "[reference(variables('publicIP').addressName).ipAddress]",
+      "type": "string"
+    }
+  }
+}
